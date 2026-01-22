@@ -20,16 +20,18 @@
 <body>
     <div class="studio">
         <div class="visual-box"><img id="newsImg" src=""></div>
-        <div class="script-box"><div id="teleprompter">क्लिक करें न्यूज़ लोड करने के लिए...</div></div>
+        <div class="script-box"><div id="teleprompter">क्लिक करें न्यूज़ शुरू करने के लिए...</div></div>
         <div class="anchor-container"><canvas id="anchorCanvas"></canvas></div>
         <video id="anchorVid" muted loop crossorigin="anonymous"><source src="anchor_video.mp4" type="video/mp4"></video>
-        <div class="ticker-bar"><marquee id="flashTicker">PTN NEWS LIVE...</marquee></div>
+        <div class="ticker-bar"><marquee id="flashTicker">PTN AI NEWS LIVE...</marquee></div>
     </div>
-
     <audio id="bgMusic" loop><source src="news_theme.mp3" type="audio/mpeg"></audio>
 
 <script>
-    const csvUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSO8MYy8nq3gF4i80hYaSbTBBNFLxYE_TdctT8exFpMsMvZcJp2njo7N5h6EJ_EpqvEfDV5tTLTIB_1/pub?gid=0&single=true&output=csv"; 
+    // --- अपनी जानकारी यहाँ भरें ---
+    const sheetId = '1q8Eq1K1EpI-X87qc9ngmwLUrUXRRanTMZrRKKJh_rjA'; 
+    const sheetName = 'Sheet1'; // आपकी शीट का नाम (नीचे टैब पर जो लिखा है)
+    const jsonUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&sheet=${sheetName}`;
 
     let newsItems = [], newsIndex = 0, imageInterval;
     const video = document.getElementById("anchorVid"), 
@@ -51,7 +53,8 @@
     function startSlideshow(linksText) {
         const img = document.getElementById("newsImg");
         clearInterval(imageInterval);
-        const links = linksText.split(',').map(l => l.trim().replace(/"/g, ""));
+        if(!linksText) return;
+        const links = linksText.split(',').map(l => l.trim());
         let idx = 0;
         img.src = links[idx];
         if(links.length > 1) {
@@ -63,41 +66,30 @@
         }
     }
 
-    // --- FIX: CSV Reading Logic ---
     async function loadData() {
         try {
-            const res = await fetch(csvUrl + "&v=" + Date.now());
+            const res = await fetch(jsonUrl);
             const text = await res.text();
+            const json = JSON.parse(text.substr(47).slice(0, -2)); // Google JSON क्लीनअप
             
-            // CSV को सही से पार्स करने का तरीका
-            const rows = text.split(/\r?\n/).filter(row => row.trim() !== "");
-            newsItems = rows.slice(1).map(row => {
-                const matches = row.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g);
-                if (matches && matches.length >= 3) {
-                    return {
-                        script: matches[0].replace(/^"|"$/g, "").replace(/""/g, '"'),
-                        visual: matches[1].replace(/^"|"$/g, ""),
-                        flash: matches[2].replace(/^"|"$/g, "")
-                    };
-                }
-                return null;
-            }).filter(item => item !== null);
+            newsItems = json.table.rows.map(row => ({
+                script: row.c[0] ? row.c[0].v : "", // Column A
+                visual: row.c[1] ? row.c[1].v : "", // Column B
+                flash:  row.c[2] ? row.c[2].v : ""  // Column C
+            })).filter(item => item.script !== "");
 
             if(newsItems.length > 0) playNews();
-            else alert("शीट में डेटा नहीं मिला!");
-        } catch (err) { console.error("Load Error:", err); }
+            else alert("शीट में कोई न्यूज़ नहीं मिली!");
+        } catch (err) { console.error("Data Load Error:", err); }
     }
 
     function playNews() {
-        if(newsIndex >= newsItems.length) { 
-            newsIndex = 0; 
-            fadeMusic(0); // म्यूजिक बंद
-            return; 
-        }
-        
+        if(newsIndex >= newsItems.length) { newsIndex = 0; bgMusic.pause(); return; }
         const item = newsItems[newsIndex];
-        document.getElementById("teleprompter").innerText = item.script;
-        document.getElementById("teleprompter").style.top = "0px";
+        
+        const prompter = document.getElementById("teleprompter");
+        prompter.innerText = item.script;
+        prompter.style.top = "0px";
         document.getElementById("flashTicker").innerText = item.flash;
         startSlideshow(item.visual);
 
@@ -106,39 +98,30 @@
         msg.lang = 'hi-IN';
         msg.rate = 0.9;
 
-        // --- प्रोफेशनल म्यूजिक कंट्रोल (Ducking) ---
         msg.onstart = () => { 
             video.play(); 
             bgMusic.play();
-            bgMusic.volume = 0.1; // बोलते समय आवाज़ धीमी (10%)
+            bgMusic.volume = 0.1; // बोलते समय धीमा
             canvas.width = video.videoWidth; 
             canvas.height = video.videoHeight; 
             processChroma(); 
         };
 
         msg.onboundary = (event) => {
-            const prompter = document.getElementById("teleprompter");
-            const percentage = event.charIndex / item.script.length;
-            prompter.style.top = `-${percentage * (prompter.scrollHeight - 200)}px`;
+            if (event.name === 'word') {
+                const percentage = event.charIndex / item.script.length;
+                prompter.style.top = `-${percentage * (prompter.scrollHeight - 200)}px`;
+            }
         };
 
         msg.onend = () => { 
             video.pause(); 
-            bgMusic.volume = 0.4; // न्यूज़ खत्म होने पर आवाज़ तेज़ (40%)
+            bgMusic.volume = 0.4; // रुकने पर तेज़
             newsIndex++; 
-            setTimeout(playNews, 3000); // 3 सेकंड का गैप
+            setTimeout(playNews, 3000); 
         };
 
         window.speechSynthesis.speak(msg);
-    }
-
-    function fadeMusic(targetVol) {
-        let curr = bgMusic.volume;
-        let interval = setInterval(() => {
-            if(Math.abs(curr - targetVol) < 0.02) { clearInterval(interval); }
-            curr = curr < targetVol ? curr + 0.01 : curr - 0.01;
-            bgMusic.volume = Math.max(0, Math.min(1, curr));
-        }, 50);
     }
 
     window.onclick = () => { if(newsItems.length === 0) loadData(); };
